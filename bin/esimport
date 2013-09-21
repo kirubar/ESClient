@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
 # Copyright 2012 Erik-Jan van Baaren (erikjan@gmail.com)
 # This tool is released as part of the python package ESClient which can be found on PyPI.org.
@@ -7,6 +7,8 @@ import esclient
 import argparse
 import sys
 import json
+import sys
+import time
 
 parser = argparse.ArgumentParser(description="Import a dump from esdump, optionally overriding the index name and/or document type." +
 " This tool will auto-detect the file type (plain, gz, bzip2) based on the file extension.\n" +
@@ -16,6 +18,9 @@ parser.add_argument('--url', '-u', required=True, help="The full URL to the Elas
 parser.add_argument('--file', '-f', required=False, help="The input file to read from. By default esimport will read from stdin")
 parser.add_argument('--index', '-i', required=False, help="Override the index where data will end up")
 parser.add_argument('--doctype', '-t', required=False, help="Override the document type")
+parser.add_argument('--mode', '-m', default="bulk",required=False, help="Mode of indexing(use single/bulk)")
+parser.add_argument('--bulk_size', '-s', default=1000,required=False, help="Size of bulk indexing")
+
 arguments = parser.parse_args()
 
 es = esclient.ESClient(arguments.url)
@@ -35,6 +40,12 @@ else:
     f = sys.stdin
 
 counter = 0
+bulk_count=0
+if arguments.mode == "bulk":
+  print "Started %s importing of %s with size %s" % (arguments.mode,arguments.file,arguments.bulk_size)
+else:
+  print "Started %s importing of %s" % (arguments.mode,arguments.file)
+startTime = int(round(time.time() * 1000))
 for doc in f:
     doc = json.loads(doc)
     
@@ -56,12 +67,29 @@ for doc in f:
         routing = doc["_routing"]
     except KeyError:
         routing = None
-
-    if not es.index(index, doctype, doc["_source"], docid=doc["_id"], parent=parent, routing=routing):
-        sys.stderr.write("Error occured while indexing documents, stopping!\n");
-        sys.exit(1)
+    
+    if arguments.mode == "single":
+	if not es.index(index, doctype, doc["_source"], docid=doc["_id"], parent=parent, routing=routing):
+	  sys.stderr.write("Error occured while indexing documents, stopping!\n");
+	  sys.exit(1)
+	else:
+	  counter += 1
     else:
-        counter += 1
+	es.bulk_index(index, doctype, doc["_source"], docid=doc["_id"])
+	counter += 1	
+	bulk_count+=1
+	if (bulk_count == int(arguments.bulk_size)):
+	    es.bulk_push();
+	    sys.stdout.write(".")
+	    sys.stdout.flush()
+	    bulk_count=0
 
 f.close()
-print "Indexing of %d documents completed" % (counter)
+
+if arguments.mode == "bulk":
+    es.bulk_push();
+    sys.stdout.write(".")
+    sys.stdout.flush()
+endTime = int(round(time.time() * 1000))
+print "\nIndexing of %d documents completed" % (counter)
+print "Elapsed time: %d ms" % (endTime-startTime)
