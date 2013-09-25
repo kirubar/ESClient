@@ -21,7 +21,7 @@ setup(name='ESClient',
         license='New BSD license',
         keywords = ["elasticsearch"],
         install_requires = install_requires,
-        scripts = ['bin/esdump', 'bin/esimport','bin/esCopy'],
+        scripts = ['bin/esdump', 'bin/esimport','bin/escopy','bin/esfind'],
         classifiers=[
             'Development Status :: 4 - Beta',
             'Environment :: Web Environment',
