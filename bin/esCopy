@@ -1,0 +1,107 @@
+#!/usr/bin/python
+
+#Author kirubar
+
+import esclient
+import json
+import argparse
+import sys
+import time
+import thread
+
+startTime = int(round(time.time() * 1000))
+
+parser = argparse.ArgumentParser(description="Copy index from one cluster to another or same.")
+
+parser.add_argument('--sourceURL', '-su', required=True, help="The full URL to the ElasticSearch server, including port")
+parser.add_argument('--targetURL', '-tu', required=True, help="The full URL to the ElasticSearch server, including port")
+parser.add_argument('--sourceIndex', '-si',required=True, nargs='+', help="Source index names to copy, may also be aliases.")
+parser.add_argument('--targetIndex', '-ti',required=True, nargs='+', help="Target index names to copy, may also be aliases.")
+parser.add_argument('--query', '-q',required=False, help="Get Dump based on the query")
+parser.add_argument('--category', '-c',required=False, help="pass category names")
+parser.add_argument('--bulk_size', '-s', default=1000,required=False, help="Size of bulk indexing")
+
+
+arguments = parser.parse_args()
+ 
+source_es = esclient.ESClient(arguments.sourceURL)
+target_es = esclient.ESClient(arguments.targetURL)
+
+## TODO: check cluster state before continuing
+
+## Get the fields that the user wants to backup in addition to the system fields as listed below
+fields = set(["_parent", "_routing", "_source"])
+#if arguments.stored_fields:
+    #for field in arguments.stored_fields:
+        #fields.add(field)
+fields = list(fields)
+
+##custom funcation for get query by category
+def get_query_by_category( category ):
+    if len(category) > 0:
+	 return { "query": { "terms": { "category": category.split(",")} } }
+    return ""
+    
+is_category=0
+if not arguments.category:
+  category = "all"
+else:
+  category = arguments.category
+  query_body = get_query_by_category(category)
+  if(len(query_body) > 0):
+    is_category=1
+
+if (is_category == 0):
+  if not arguments.query:
+    query_body = { "query": { "match_all": {} }, "fields": fields }
+  else:
+    query_body = json.loads(arguments.query)
+
+print "Started coping of indexes : %s" %(arguments.sourceIndex)
+scroll_id = source_es.scan(query_body = query_body, indexes = arguments.sourceIndex)
+
+def trasnform_response(hit):
+   source = hit["_source"];
+   return source;
+
+bulk_count = 0
+def bulk_reindexing(hit):
+  global bulk_count
+  source_doc = trasnform_response(hit);
+  target_es.bulk_index(arguments.targetIndex, hit["_type"], source_doc, docid=hit["_id"])
+  bulk_count+=1
+  if (bulk_count == int(arguments.bulk_size)):
+	  target_es.bulk_push();	
+	  sys.stdout.write(".")
+	  sys.stdout.flush()
+	  bulk_count=0
+	  
+total_docs = 0
+while True:
+    scrollres = source_es.scroll(scroll_id)
+    
+    ## get next scroll_id
+    scroll_id = scrollres["_scroll_id"]
+    hits = scrollres["hits"]["hits"]
+    if total_docs  == 0:
+      print "Total Documents: %s" % (scrollres["hits"]["total"])
+    num_results = 0
+    for hit in scrollres["hits"]["hits"]:
+	bulk_reindexing(hit)
+        num_results += 1
+        total_docs+=1
+    ## See if we reached the end of the data
+    if num_results == 0:
+        break
+
+if bulk_count != 0:
+    target_es.bulk_push();	
+    sys.stdout.write(".")
+    sys.stdout.flush()
+  
+## TODO
+## write_mappings(indexes)
+endTime = int(round(time.time() * 1000))
+
+print "\nTotal docs Copied:",total_docs;
+print "Elapsed time: %d ms" % (endTime-startTime)

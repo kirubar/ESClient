@@ -37,7 +37,7 @@ class ESClient:
 
     """
 
-    def __init__(self, es_url='http://localhost:9200', request_timeout=10):
+    def __init__(self, es_url='http://localhost:9200', request_timeout=60):
         self.es_url = es_url
         self.request_timeout = request_timeout
         self.bulk_data = ''
